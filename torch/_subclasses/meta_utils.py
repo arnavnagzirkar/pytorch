@@ -528,11 +528,17 @@ class MetaStorageDesc:
     data: torch.UntypedStorage | None
 
     def as_json(self, describer_id: _DescriberId) -> dict[str, object]:
-        return {
+        metadata: dict[str, object] = {
             "id": self.id,
             "describer_id": describer_id,
             "size": self.size if isinstance(self.size, int) else repr(self.size),
         }
+        if isinstance(self.size, torch.SymInt):
+            from torch.fx.experimental.symbolic_shapes import optimization_hint
+
+            if (size_hint := optimization_hint(self.size, fallback=None)) is not None:
+                metadata["size_hint"] = size_hint
+        return metadata
 
 
 @dataclass(frozen=True)
