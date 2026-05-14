@@ -72,6 +72,43 @@ def _sanitize_kernel_options_for_triton(
     return sanitized, backend
 
 
+def _prune_unused_subgraph_buffers(
+    graph_module: torch.fx.GraphModule,
+    num_fixed_placeholders: int,
+    other_buffers: Sequence[Any],
+) -> list[Any]:
+    """Drop captured buffers whose corresponding subgraph placeholder is dead.
+
+    Dynamic-shape tracing may lift shape-derived scalars into a FlexAttention
+    score/mask subgraph even when later graph simplification removes every use
+    of that placeholder. Keeping the dead capture exposes scalar IR objects to
+    template paths that only reason about tensor captures. The HOP contract is
+    positional, so prune the placeholder and its buffer together.
+    """
+    placeholders = [
+        node for node in graph_module.graph.nodes if node.op == "placeholder"
+    ]
+    captured_placeholders = placeholders[num_fixed_placeholders:]
+    assert len(captured_placeholders) == len(other_buffers), (
+        f"Expected {len(captured_placeholders)} captured buffers for "
+        f"{graph_module}, got {len(other_buffers)}"
+    )
+
+    kept: list[Any] = []
+    changed = False
+    for placeholder, buffer in zip(captured_placeholders, other_buffers):
+        if placeholder.users:
+            kept.append(buffer)
+            continue
+        graph_module.graph.erase_node(placeholder)
+        changed = True
+
+    if changed:
+        graph_module.graph.lint()
+        graph_module.recompile()
+    return kept
+
+
 @SymbolicGridFn
 def flex_attention_grid(batch_size, q_heads, num_queries, d_model, meta, *, cdiv):
     """How is this kernel parallelized?
@@ -162,6 +199,11 @@ def flex_attention(
         SPARSE_KV_BLOCK_SIZE,
         mask_graph,
     ) = block_mask
+
+    score_mod_other_buffers = list(score_mod_other_buffers)
+    mask_mod_other_buffers = _prune_unused_subgraph_buffers(
+        mask_graph.graph_module, 4, mask_mod_other_buffers
+    )
 
     kernel_options, backend = _sanitize_kernel_options_for_triton(kernel_options)
 
@@ -660,6 +702,11 @@ def flex_attention_backward(*args, **kwargs):
         SPARSE_KV_BLOCK_SIZE,
         mask_graph,
     ) = block_mask
+
+    score_mod_other_buffers = list(score_mod_other_buffers)
+    mask_mod_other_buffers = _prune_unused_subgraph_buffers(
+        mask_graph.graph_module, 4, mask_mod_other_buffers
+    )
 
     (
         query,
