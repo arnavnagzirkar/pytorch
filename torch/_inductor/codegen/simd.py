@@ -37,7 +37,6 @@ from ..analyze_preserves_zero_mask import prologue_preserves_zero_mask
 from ..codecache import code_hash, PyCodeCache
 from ..dependencies import MemoryDep, StarDep, WeakDep
 
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -71,7 +70,6 @@ from .simd_kernel_features import (
     NodeScheduleMarker,
     SIMDKernelFeatures,
 )
-
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -728,7 +726,9 @@ class SIMDKernel(Kernel[CSEVariableType], Generic[CSEVariableType]):
     def should_use_persistent_reduction(self) -> bool:
         return False  # defined in subclass
 
-    def _should_peel_reduction_loop(self, loop_trees: list[IterationRangesRoot]) -> bool:
+    def _should_peel_reduction_loop(
+        self, loop_trees: list[IterationRangesRoot]
+    ) -> bool:
         return False  # defined in subclass
 
     def var_ranges(self) -> dict[sympy.Symbol, sympy.Expr]:
@@ -1371,25 +1371,33 @@ class SIMDKernel(Kernel[CSEVariableType], Generic[CSEVariableType]):
                     log.warning(msg)
 
                     stride_order_list = [
-                        ir.get_stride_order(
-                            V.graph.get_buffer(name).get_layout().stride
+                        (
+                            ir.get_stride_order(
+                                V.graph.get_buffer(name).get_layout().stride
+                            )
+                            if V.graph.try_get_buffer(name)
+                            else None
                         )
-                        if V.graph.try_get_buffer(name)
-                        else None
                         for name in call_args
                     ]
                     size_list = [
-                        V.graph.get_buffer(name).get_layout().size
-                        if V.graph.try_get_buffer(name)
-                        else None
+                        (
+                            V.graph.get_buffer(name).get_layout().size
+                            if V.graph.try_get_buffer(name)
+                            else None
+                        )
                         for name in call_args
                     ]
                     source_list = [
-                        "GraphInput"
-                        if name in V.graph.graph_inputs
-                        else "IntermediateBuffer"
-                        if name in V.graph.name_to_buffer
-                        else None
+                        (
+                            "GraphInput"
+                            if name in V.graph.graph_inputs
+                            else (
+                                "IntermediateBuffer"
+                                if name in V.graph.name_to_buffer
+                                else None
+                            )
+                        )
                         for name in call_args
                     ]
 
@@ -2335,9 +2343,11 @@ class SIMDScheduling(BaseScheduling):
         shapes = self._get_multikernel_shapes(node)
         return tuple(
             tuple(
-                hint
-                if isinstance(s, sympy.Expr) and not isinstance(s, sympy.Integer)
-                else s
+                (
+                    hint
+                    if isinstance(s, sympy.Expr) and not isinstance(s, sympy.Integer)
+                    else s
+                )
                 for s in shape
             )
             for shape in shapes
@@ -3257,14 +3267,10 @@ class SIMDScheduling(BaseScheduling):
                         not config.triton.tile_reductions
                         and len(cls.candidate_tilings(node, numel, reduction_numel)) > 0
                     ):
-                        perf_hint_log.info(
-                            textwrap.dedent(
-                                """
+                        perf_hint_log.info(textwrap.dedent("""
                                 Reduction over non-contiguous dims.
                                 Consider setting config.triton.tile_reductions to True.
-                                """
-                            )
-                        )
+                                """))
                         break
 
             return default_tiling, None
