@@ -1786,6 +1786,8 @@ def _as_strided_scatter_meta(
     stride: StrideType,
     storage_offset: int,
 ) -> TensorLikeType:
+    from torch.fx.experimental.symbolic_shapes import sym_eq
+
     utils.validate_shape(size)
     utils.validate_strides(stride)
 
@@ -1800,7 +1802,7 @@ def _as_strided_scatter_meta(
         ),
     )
     torch._check(
-        utils.is_same_shape(src.shape, size),
+        sym_eq(src.shape, size),
         lambda: f"expected src to have a size equal to the slice of self. src size = {src.shape}, slice size = {size}",
     )
 
